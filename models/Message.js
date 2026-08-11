@@ -8,6 +8,14 @@ const schema = new mongoose.Schema({
   text:      String,
   reactions: { type: Map, of: [String], default: () => new Map() },
   time:      String,
+  edited:    { type: Boolean, default: false },
+  deleted:   { type: Boolean, default: false },
+  replyTo: {
+    msgId:    String,
+    username: String,
+    text:     String,
+    color:    String,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Message', schema);

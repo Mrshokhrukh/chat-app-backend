@@ -40,12 +40,26 @@ app.use(express.json());
 
 app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
+// ── Search endpoint ────────────────────────────────────────────────
+app.get('/api/search', async (req, res) => {
+  const { q, room } = req.query;
+  if (!q || q.trim().length < 2) return res.json([]);
+  try {
+    const filter = { type: 'user', deleted: { $ne: true }, text: { $regex: q.trim(), $options: 'i' } };
+    if (room) filter.room = room;
+    const msgs = await Message.find(filter).sort({ createdAt: -1 }).limit(40).lean();
+    res.json(msgs.map(toClient));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true },
 });
 
-const onlineUsers = {}; // socketId -> { username, color }
+const onlineUsers = {}; // socketId -> { username, color, status }
 const roomTyping  = {}; // roomId   -> Set<socketId>
 
 // ── Auth middleware ────────────────────────────────────────────────
@@ -87,7 +101,7 @@ io.use(async (socket, next) => {
 // ── Connection ─────────────────────────────────────────────────────
 io.on('connection', async (socket) => {
   const { username, color } = socket.userData;
-  onlineUsers[socket.id] = { username, color };
+  onlineUsers[socket.id] = { username, color, status: 'online' };
 
   if (socket.newToken) socket.emit('new_token', socket.newToken);
 
@@ -131,13 +145,36 @@ io.on('connection', async (socket) => {
   });
 
   // ── Xabarlar ───────────────────────────────────────────────
-  socket.on('message', async ({ room, text }) => {
+  socket.on('message', async ({ room, text, replyTo }) => {
     if (!rooms.has(room)) return;
     try {
-      const msg = await Message.create({
-        room, type: 'user', username, color, text: text.trim(), time: now(),
-      });
+      const msgData = { room, type: 'user', username, color, text: text.trim(), time: now() };
+      if (replyTo?.msgId) msgData.replyTo = replyTo;
+      const msg = await Message.create(msgData);
       io.to(room).emit('message', toClient(msg));
+    } catch (e) { console.error(e); }
+  });
+
+  // ── Edit message ───────────────────────────────────────────
+  socket.on('edit_message', async ({ msgId, room, text }) => {
+    try {
+      const msg = await Message.findById(msgId);
+      if (!msg || msg.username !== username || msg.deleted) return;
+      msg.text   = text.trim();
+      msg.edited = true;
+      await msg.save();
+      io.to(room).emit('message_updated', toClient(msg));
+    } catch (e) { console.error(e); }
+  });
+
+  // ── Delete message ─────────────────────────────────────────
+  socket.on('delete_message', async ({ msgId, room }) => {
+    try {
+      const msg = await Message.findById(msgId);
+      if (!msg || msg.username !== username) return;
+      msg.deleted = true;
+      await msg.save();
+      io.to(room).emit('message_deleted', { msgId, room });
     } catch (e) { console.error(e); }
   });
 
@@ -161,6 +198,15 @@ io.on('connection', async (socket) => {
       }).sort({ createdAt: 1 }).limit(100).lean();
       socket.emit('dm_history', { with: other, messages: msgs.map(dmToClient) });
     } catch (e) { console.error(e); }
+  });
+
+  // ── Status ─────────────────────────────────────────────────
+  socket.on('set_status', (status) => {
+    if (!['online', 'away', 'busy'].includes(status)) return;
+    if (onlineUsers[socket.id]) {
+      onlineUsers[socket.id].status = status;
+      io.emit('users', Object.values(onlineUsers));
+    }
   });
 
   // ── Typing ─────────────────────────────────────────────────
@@ -233,14 +279,17 @@ function toClient(msg) {
     Object.assign(reactions, msg.reactions);
   }
   return {
-    id:       msg._id.toString(),
-    type:     msg.type,
-    room:     msg.room,
-    username: msg.username,
-    color:    msg.color,
-    text:     msg.text,
-    time:     msg.time,
+    id:        msg._id.toString(),
+    type:      msg.type,
+    room:      msg.room,
+    username:  msg.username,
+    color:     msg.color,
+    text:      msg.text,
+    time:      msg.time,
     reactions,
+    edited:    msg.edited ?? false,
+    deleted:   msg.deleted ?? false,
+    replyTo:   msg.replyTo ?? null,
   };
 }
 
