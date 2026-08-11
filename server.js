@@ -12,7 +12,12 @@ import DmMessage from './models/DmMessage.js';
 const PORT       = process.env.PORT       || 3001;
 const MONGO_URL  = process.env.MONGO_URL  || 'mongodb://localhost:27017/chatapp';
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'https://chat-app-two-steel-34.vercel.app',
+  process.env.CLIENT_URL,
+].filter(Boolean);
 
 const COLORS = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63'];
 
@@ -30,14 +35,14 @@ const rooms = new Set(['general', 'random', ...savedRooms]);
 
 // ── Express + Socket.IO ────────────────────────────────────────────
 const app = express();
-app.use(cors({ origin: CLIENT_URL }));
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json());
 
 app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: CLIENT_URL, methods: ['GET', 'POST'] },
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true },
 });
 
 const onlineUsers = {}; // socketId -> { username, color }
