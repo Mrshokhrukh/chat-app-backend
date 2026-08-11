@@ -89,6 +89,7 @@ app.get('/api/search', async (req, res) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true },
+  maxHttpBufferSize: 8 * 1024 * 1024, // 8 MB — allows compressed base64 images
 });
 
 const onlineUsers = {}; // socketId -> { username, color, status }
