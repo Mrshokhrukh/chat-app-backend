@@ -25,9 +25,10 @@ const ALLOWED_ORIGINS = [
 const COLORS = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63'];
 
 // ── File upload setup ──────────────────────────────────────────────
-mkdirSync('./uploads', { recursive: true });
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+mkdirSync(UPLOADS_DIR, { recursive: true });
 const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, './uploads'),
+  destination: (_, __, cb) => cb(null, UPLOADS_DIR),
   filename:    (_, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${path.extname(file.originalname)}`),
 });
 const upload = multer({
@@ -59,7 +60,7 @@ app.use(express.json());
 app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 // Serve uploaded files
-app.use('/uploads', express.static('./uploads'));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // File upload endpoint
 app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -184,7 +185,7 @@ io.on('connection', async (socket) => {
         text: (text ?? '').trim(), time: now(),
       };
       if (replyTo?.msgId) msgData.replyTo = replyTo;
-      if (attachment?.url)  msgData.attachment = attachment;
+      if (attachment?.type) msgData.attachment = attachment;
       const msg = await Message.create(msgData);
       io.to(room).emit('message', toClient(msg));
     } catch (e) { console.error(e); }
