@@ -16,6 +16,11 @@ const schema = new mongoose.Schema({
     text:     String,
     color:    String,
   },
+  attachment: {
+    type: String, // 'image' | 'video' | 'gif' | 'sticker' | 'file'
+    url:  String,
+    name: String,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Message', schema);

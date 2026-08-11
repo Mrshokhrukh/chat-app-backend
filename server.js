@@ -5,6 +5,9 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import path from 'path';
+import { mkdirSync } from 'fs';
 import User from './models/User.js';
 import Message from './models/Message.js';
 import DmMessage from './models/DmMessage.js';
@@ -20,6 +23,21 @@ const ALLOWED_ORIGINS = [
 ].filter(Boolean);
 
 const COLORS = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63'];
+
+// ── File upload setup ──────────────────────────────────────────────
+mkdirSync('./uploads', { recursive: true });
+const storage = multer.diskStorage({
+  destination: (_, __, cb) => cb(null, './uploads'),
+  filename:    (_, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${path.extname(file.originalname)}`),
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_, file, cb) => {
+    const ok = /image|video|gif/.test(file.mimetype);
+    cb(null, ok);
+  },
+});
 
 // ── MongoDB ────────────────────────────────────────────────────────
 try {
@@ -39,6 +57,19 @@ app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json());
 
 app.get('/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+
+// Serve uploaded files
+app.use('/uploads', express.static('./uploads'));
+
+// File upload endpoint
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  const base = process.env.CLIENT_URL ? process.env.BASE_URL : `http://localhost:${PORT}`;
+  const url  = `${process.env.BASE_URL || `http://localhost:${PORT}`}/uploads/${req.file.filename}`;
+  const mime = req.file.mimetype;
+  const type = mime.startsWith('video') ? 'video' : mime.includes('gif') ? 'gif' : 'image';
+  res.json({ url, type, name: req.file.originalname });
+});
 
 // ── Search endpoint ────────────────────────────────────────────────
 app.get('/api/search', async (req, res) => {
@@ -145,11 +176,15 @@ io.on('connection', async (socket) => {
   });
 
   // ── Xabarlar ───────────────────────────────────────────────
-  socket.on('message', async ({ room, text, replyTo }) => {
+  socket.on('message', async ({ room, text, replyTo, attachment }) => {
     if (!rooms.has(room)) return;
     try {
-      const msgData = { room, type: 'user', username, color, text: text.trim(), time: now() };
+      const msgData = {
+        room, type: 'user', username, color,
+        text: (text ?? '').trim(), time: now(),
+      };
       if (replyTo?.msgId) msgData.replyTo = replyTo;
+      if (attachment?.url)  msgData.attachment = attachment;
       const msg = await Message.create(msgData);
       io.to(room).emit('message', toClient(msg));
     } catch (e) { console.error(e); }
@@ -287,9 +322,10 @@ function toClient(msg) {
     text:      msg.text,
     time:      msg.time,
     reactions,
-    edited:    msg.edited ?? false,
-    deleted:   msg.deleted ?? false,
-    replyTo:   msg.replyTo ?? null,
+    edited:     msg.edited ?? false,
+    deleted:    msg.deleted ?? false,
+    replyTo:    msg.replyTo ?? null,
+    attachment: msg.attachment ?? null,
   };
 }
 
